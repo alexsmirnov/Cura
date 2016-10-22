@@ -3,6 +3,7 @@
 
 from PyQt5.QtCore import QObject, pyqtSlot, pyqtProperty, pyqtSignal
 from PyQt5.QtWidgets import QMessageBox
+from UM import Util
 
 from UM.Application import Application
 from UM.Preferences import Preferences
@@ -72,6 +73,9 @@ class MachineManager(QObject):
         self._auto_materials_changed = {}
         self._auto_hotends_changed = {}
 
+        self._material_incompatible_message = Message(catalog.i18nc("@info:status",
+                                              "The selected material is incompatible with the selected machine or configuration."))
+
     globalContainerChanged = pyqtSignal() # Emitted whenever the global stack is changed (ie: when changing between printers, changing a global profile, but not when changing a value)
     activeMaterialChanged = pyqtSignal()
     activeVariantChanged = pyqtSignal()
@@ -131,7 +135,7 @@ class MachineManager(QObject):
 
         definition_id = "fdmprinter"
         if self._global_container_stack.getMetaDataEntry("has_machine_materials", False):
-            definition_id = self._global_container_stack.getBottom().getId()
+            definition_id = self.activeQualityDefinitionId
         extruder_manager = ExtruderManager.getInstance()
         containers = UM.Settings.ContainerRegistry.getInstance().findInstanceContainers(type = "material", definition = definition_id, GUID = material_id)
         if containers:  # New material ID is known
@@ -142,9 +146,18 @@ class MachineManager(QObject):
                     matching_extruder = extruder
                     break
 
-            if matching_extruder and matching_extruder.findContainer({"type":"material"}).getMetaDataEntry("GUID") != material_id:
+            if matching_extruder and matching_extruder.findContainer({"type": "material"}).getMetaDataEntry("GUID") != material_id:
                 # Save the material that needs to be changed. Multiple changes will be handled by the callback.
-                self._auto_materials_changed[str(index)] = containers[0].getId()
+                variant_container = matching_extruder.findContainer({"type": "variant"})
+                if self._global_container_stack.getBottom().getMetaDataEntry("has_variants") and variant_container:
+                    variant_id = self.getQualityVariantId(self._global_container_stack.getBottom(), variant_container)
+                    for container in containers:
+                        if container.getMetaDataEntry("variant") == variant_id:
+                            self._auto_materials_changed[str(index)] = container.getId()
+                            break
+                else:
+                    # Just use the first result we found.
+                    self._auto_materials_changed[str(index)] = containers[0].getId()
                 self._printer_output_devices[0].materialHotendChangedMessage(self._materialHotendChangedCallback)
         else:
             Logger.log("w", "No material definition found for printer definition %s and GUID %s" % (definition_id, material_id))
@@ -220,6 +233,9 @@ class MachineManager(QObject):
 
     def _onActiveExtruderStackChanged(self):
         self.blurSettings.emit()  # Ensure no-one has focus.
+
+        old_active_container_stack = self._active_container_stack
+
         if self._active_container_stack and self._active_container_stack != self._global_container_stack:
             self._active_container_stack.containersChanged.disconnect(self._onInstanceContainersChanged)
             self._active_container_stack.propertyChanged.disconnect(self._onPropertyChanged)
@@ -229,8 +245,16 @@ class MachineManager(QObject):
             self._active_container_stack.propertyChanged.connect(self._onPropertyChanged)
         else:
             self._active_container_stack = self._global_container_stack
+
+        old_active_stack_valid = self._active_stack_valid
         self._active_stack_valid = not self._checkStackForErrors(self._active_container_stack)
-        self.activeStackValidationChanged.emit()
+        if old_active_stack_valid != self._active_stack_valid:
+            self.activeStackValidationChanged.emit()
+
+        if old_active_container_stack != self._active_container_stack:
+            # Many methods and properties related to the active quality actually depend
+            # on _active_container_stack. If it changes, then the properties change.
+            self.activeQualityChanged.emit()
 
     def _onInstanceContainersChanged(self, container):
         container_type = container.getMetaDataEntry("type")
@@ -363,10 +387,20 @@ class MachineManager(QObject):
         top_container.removeInstance(key, postpone_emit=True)
         send_emits_containers.append(top_container)
 
-        for stack in ExtruderManager.getInstance().getMachineExtruders(self._global_container_stack.getId()):
-            container = stack.getTop()
-            container.removeInstance(key, postpone_emit=True)
-            send_emits_containers.append(container)
+        linked = not self._global_container_stack.getProperty(key, "settable_per_extruder") or \
+                      self._global_container_stack.getProperty(key, "limit_to_extruder") != "-1"
+
+        if not linked:
+            stack = ExtruderManager.getInstance().getActiveExtruderStack()
+            stacks = [stack]
+        else:
+            stacks = ExtruderManager.getInstance().getMachineExtruders(self._global_container_stack.getId())
+
+        for stack in stacks:
+            if stack is not None:
+                container = stack.getTop()
+                container.removeInstance(key, postpone_emit=True)
+                send_emits_containers.append(container)
 
         for container in send_emits_containers:
             container.sendPostponedEmits()
@@ -440,6 +474,32 @@ class MachineManager(QObject):
 
         return result
 
+    ##  Gets the layer height of the currently active quality profile.
+    #
+    #   This is indicated together with the name of the active quality profile.
+    #
+    #   \return The layer height of the currently active quality profile. If
+    #   there is no quality profile, this returns 0.
+    @pyqtProperty(float, notify=activeQualityChanged)
+    def activeQualityLayerHeight(self):
+        if not self._global_container_stack:
+            return 0
+
+        quality_changes = self._global_container_stack.findContainer({"type": "quality_changes"})
+        if quality_changes:
+            value = self._global_container_stack.getRawProperty("layer_height", "value", skip_until_container = quality_changes.getId())
+            if isinstance(value, UM.Settings.SettingFunction):
+                value = value(self._global_container_stack)
+            return value
+        quality = self._global_container_stack.findContainer({"type": "quality"})
+        if quality:
+            value = self._global_container_stack.getRawProperty("layer_height", "value", skip_until_container = quality.getId())
+            if isinstance(value, UM.Settings.SettingFunction):
+                value = value(self._global_container_stack)
+            return value
+
+        return 0 #No quality profile.
+
     ##  Get the Material ID associated with the currently active material
     #   \returns MaterialID (string) if found, empty string otherwise
     @pyqtProperty(str, notify=activeQualityChanged)
@@ -461,8 +521,8 @@ class MachineManager(QObject):
 
     @pyqtProperty(str, notify=activeQualityChanged)
     def activeQualityName(self):
-        if self._active_container_stack:
-            quality = self._active_container_stack.findContainer({"type": "quality_changes"})
+        if self._active_container_stack and self._global_container_stack:
+            quality = self._global_container_stack.findContainer({"type": "quality_changes"})
             if quality and quality != self._empty_quality_changes_container:
                 return quality.getName()
             quality = self._active_container_stack.findContainer({"type": "quality"})
@@ -472,6 +532,17 @@ class MachineManager(QObject):
 
     @pyqtProperty(str, notify=activeQualityChanged)
     def activeQualityId(self):
+        if self._active_container_stack:
+            quality = self._active_container_stack.findContainer({"type": "quality_changes"})
+            if quality and quality != self._empty_quality_changes_container:
+                return quality.getId()
+            quality = self._active_container_stack.findContainer({"type": "quality"})
+            if quality:
+                return quality.getId()
+        return ""
+
+    @pyqtProperty(str, notify=activeQualityChanged)
+    def globalQualityId(self):
         if self._global_container_stack:
             quality = self._global_container_stack.findContainer({"type": "quality_changes"})
             if quality and quality != self._empty_quality_changes_container:
@@ -483,16 +554,39 @@ class MachineManager(QObject):
 
     @pyqtProperty(str, notify = activeQualityChanged)
     def activeQualityType(self):
-        if self._global_container_stack:
-            quality = self._global_container_stack.findContainer(type = "quality")
+        if self._active_container_stack:
+            quality = self._active_container_stack.findContainer(type = "quality")
             if quality:
                 return quality.getMetaDataEntry("quality_type")
         return ""
 
+    @pyqtProperty(bool, notify = activeQualityChanged)
+    def isActiveQualitySupported(self):
+        if self._active_container_stack:
+            quality = self._active_container_stack.findContainer(type = "quality")
+            if quality:
+                return Util.parseBool(quality.getMetaDataEntry("supported", True))
+        return ""
+
+    ##  Get the Quality ID associated with the currently active extruder
+    #   Note that this only returns the "quality", not the "quality_changes"
+    #   \returns QualityID (string) if found, empty string otherwise
+    #   \sa activeQualityId()
+    #   \todo Ideally, this method would be named activeQualityId(), and the other one
+    #         would be named something like activeQualityOrQualityChanges() for consistency
+    @pyqtProperty(str, notify = activeQualityChanged)
+    def activeQualityContainerId(self):
+        # We're using the active stack instead of the global stack in case the list of qualities differs per extruder
+        if self._global_container_stack:
+            quality = self._active_container_stack.findContainer(type = "quality")
+            if quality:
+                return quality.getId()
+        return ""
+
     @pyqtProperty(str, notify = activeQualityChanged)
     def activeQualityChangesId(self):
-        if self._global_container_stack:
-            changes = self._global_container_stack.findContainer(type = "quality_changes")
+        if self._active_container_stack:
+            changes = self._active_container_stack.findContainer(type = "quality_changes")
             if changes:
                 return changes.getId()
         return ""
@@ -544,13 +638,14 @@ class MachineManager(QObject):
 
         material_index = self._active_container_stack.getContainerIndex(old_material)
         self._active_container_stack.replaceContainer(material_index, material_container)
+        Logger.log("d", "Active material changed")
 
         material_container.nameChanged.connect(self._onMaterialNameChanged)
 
         if material_container.getMetaDataEntry("compatible") == False:
-            message = Message(catalog.i18nc("@info:status",
-                                            "The selected material is imcompatible with the selected machine or configuration."))
-            message.show()
+            self._material_incompatible_message.show()
+        else:
+            self._material_incompatible_message.hide()
 
         new_quality_id = old_quality.getId()
         quality_type = old_quality.getMetaDataEntry("quality_type")
@@ -564,12 +659,13 @@ class MachineManager(QObject):
         candidate_quality = quality_manager.findQualityByQualityType(quality_type,
                                    quality_manager.getWholeMachineDefinition(machine_definition),
                                    [material_container])
-        if not candidate_quality:
+        if not candidate_quality or candidate_quality.getId() == "empty_quality":
             # Fall back to a quality
-            new_quality_id = quality_manager.findQualityByQualityType(None,
+            new_quality = quality_manager.findQualityByQualityType(None,
                                 quality_manager.getWholeMachineDefinition(machine_definition),
                                 [material_container])
-
+            if new_quality:
+                new_quality_id = new_quality.getId()
         else:
             if not old_quality_changes:
                 new_quality_id = candidate_quality.getId()
@@ -588,7 +684,7 @@ class MachineManager(QObject):
             self.blurSettings.emit()
             variant_index = self._active_container_stack.getContainerIndex(old_variant)
             self._active_container_stack.replaceContainer(variant_index, containers[0])
-
+            Logger.log("d", "Active variant changed")
             preferred_material = None
             if old_material:
                 preferred_material_name = old_material.getName()
@@ -617,7 +713,7 @@ class MachineManager(QObject):
 
         # Get quality container and optionally the quality_changes container.
         if container_type == "quality":
-            new_quality_settings_list = self._determineQualityAndQualityChangesForQualityType(quality_type)
+            new_quality_settings_list = self.determineQualityAndQualityChangesForQualityType(quality_type)
         elif container_type == "quality_changes":
             new_quality_settings_list = self._determineQualityAndQualityChangesForQualityChanges(quality_name)
         else:
@@ -653,7 +749,7 @@ class MachineManager(QObject):
     #
     #   \param quality_name \type{str} the name of the quality.
     #   \return \type{List[Dict]} with keys "stack", "quality" and "quality_changes".
-    def _determineQualityAndQualityChangesForQualityType(self, quality_type):
+    def determineQualityAndQualityChangesForQualityType(self, quality_type):
         quality_manager = QualityManager.getInstance()
         result = []
         empty_quality_changes = self._empty_quality_changes_container
@@ -743,10 +839,20 @@ class MachineManager(QObject):
     def _askUserToKeepOrClearCurrentSettings(self):
         # Ask the user if the user profile should be cleared or not (discarding the current settings)
         # In Simple Mode we assume the user always wants to keep the (limited) current settings
-        details = catalog.i18nc("@label", "You made changes to the following setting(s):")
-        user_settings = self._active_container_stack.getTop().findInstances(**{})
-        for setting in user_settings:
-            details = details + "\n    " + setting.definition.label
+        details_text = catalog.i18nc("@label", "You made changes to the following setting(s):")
+
+        # user changes in global stack
+        details_list = [setting.definition.label for setting in self._global_container_stack.getTop().findInstances(**{})]
+
+        # user changes in extruder stacks
+        stacks = list(ExtruderManager.getInstance().getMachineExtruders(self._global_container_stack.getId()))
+        for stack in stacks:
+            details_list.extend([
+                "%s (%s)" % (setting.definition.label, stack.getName())
+                for setting in stack.getTop().findInstances(**{})])
+
+        # Format to output string
+        details = "\n    ".join([details_text, ] + details_list)
 
         Application.getInstance().messageBox(catalog.i18nc("@window:title", "Switched profiles"),
                                              catalog.i18nc("@label",
@@ -817,8 +923,8 @@ class MachineManager(QObject):
     #   \sa getQualityVariantId
     @pyqtProperty(str, notify = activeVariantChanged)
     def activeQualityVariantId(self):
-        if self._global_container_stack:
-            variant = self._global_container_stack.findContainer({"type": "variant"})
+        if self._active_container_stack:
+            variant = self._active_container_stack.findContainer({"type": "variant"})
             if variant:
                 return self.getQualityVariantId(self._global_container_stack.getBottom(), variant)
         return ""

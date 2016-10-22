@@ -244,6 +244,8 @@ Column
                     }
 
                 }
+                property var valueWarning: ! Cura.MachineManager.isActiveQualitySupported
+
                 enabled: !extrudersList.visible || base.currentExtruderIndex  > -1
 
                 height: UM.Theme.getSize("setting_control").height
@@ -283,14 +285,23 @@ Column
         ToolButton
         {
             id: globalProfileSelection
-            text: Cura.MachineManager.activeQualityName
+            text: {
+                var result = Cura.MachineManager.activeQualityName;
+                if (Cura.MachineManager.activeQualityLayerHeight > 0) {
+                    result += " <font color=\"" + UM.Theme.getColor("text_detail") + "\">";
+                    result += " - ";
+                    result += Cura.MachineManager.activeQualityLayerHeight + "mm";
+                    result += "</font>";
+                }
+                return result;
+            }
             enabled: !extrudersList.visible || base.currentExtruderIndex  > -1
 
             width: parent.width * 0.55 + UM.Theme.getSize("default_margin").width
             height: UM.Theme.getSize("setting_control").height
             tooltip: Cura.MachineManager.activeQualityName
             style: UM.Theme.styles.sidebar_header_button
-            property var valueWarning: Cura.MachineManager.activeQualityId == "empty_quality"
+            property var valueWarning: ! Cura.MachineManager.isActiveQualitySupported
             menu: ProfileMenu { }
 
             UM.SimpleButton

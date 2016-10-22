@@ -17,7 +17,7 @@ Menu
 
         MenuItem
         {
-            text: model.name
+            text: model.name + " - " + model.layer_height
             checkable: true
             checked: Cura.MachineManager.activeQualityChangesId == "empty_quality_changes" && Cura.MachineManager.activeQualityType == model.metadata.quality_type
             exclusiveGroup: group
@@ -33,21 +33,16 @@ Menu
     Instantiator
     {
         id: customProfileInstantiator
-        model: UM.InstanceContainersModel
+        model: Cura.UserProfilesModel
         {
-            filter: ({
-                "type": "quality_changes",
-                "extruder": null,
-                "definition": Cura.MachineManager.filterQualityByMachine ? Cura.MachineManager.activeQualityDefinitionId : "fdmprinter"
-                })
             onModelReset: customSeparator.visible = rowCount() > 0
         }
 
         MenuItem
         {
-            text: model.name
+            text: model.name + " - " + model.layer_height
             checkable: true
-            checked: Cura.MachineManager.activeQualityId == model.id
+            checked: Cura.MachineManager.globalQualityId == model.id
             exclusiveGroup: group
             onTriggered: Cura.MachineManager.setActiveQuality(model.id)
         }

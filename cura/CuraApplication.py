@@ -49,11 +49,44 @@ from PyQt5.QtGui import QColor, QIcon
 from PyQt5.QtWidgets import QMessageBox
 from PyQt5.QtQml import qmlRegisterUncreatableType, qmlRegisterSingletonType, qmlRegisterType
 
+from contextlib import contextmanager
+
 import sys
 import os.path
 import numpy
 import copy
 import urllib
+import os
+import time
+
+CONFIG_LOCK_FILENAME = "cura.lock"
+
+##  Contextmanager to create a lock file and remove it afterwards.
+@contextmanager
+def lockFile(filename):
+    try:
+        with open(filename, 'w') as lock_file:
+            lock_file.write("Lock file - Cura is currently writing")
+    except:
+        Logger.log("e", "Could not create lock file [%s]" % filename)
+    yield
+    try:
+        if os.path.exists(filename):
+            os.remove(filename)
+    except:
+        Logger.log("e", "Could not delete lock file [%s]" % filename)
+
+
+##  Wait for a lock file to disappear
+#   the maximum allowable age is settable; if the file is too old, it will be ignored too
+def waitFileDisappear(filename, max_age_seconds=10, msg=""):
+    now = time.time()
+    while os.path.exists(filename) and now < os.path.getmtime(filename) + max_age_seconds and now > os.path.getmtime(filename):
+        if msg:
+            Logger.log("d", msg)
+        time.sleep(1)
+        now = time.time()
+
 
 numpy.seterr(all="ignore")
 
@@ -201,6 +234,9 @@ class CuraApplication(QtApplication):
         empty_quality_changes_container.addMetaDataEntry("type", "quality_changes")
         ContainerRegistry.getInstance().addContainer(empty_quality_changes_container)
 
+        # Set the filename to create if cura is writing in the config dir.
+        self._config_lock_filename = os.path.join(Resources.getConfigStoragePath(), CONFIG_LOCK_FILENAME)
+        self.waitConfigLockFile()
         ContainerRegistry.getInstance().load()
 
         Preferences.getInstance().addPreference("cura/active_mode", "simple")
@@ -247,17 +283,17 @@ class CuraApplication(QtApplication):
                 cool_fan_enabled
             support
                 support_enable
+                support_extruder_nr
                 support_type
                 support_interface_density
             platform_adhesion
                 adhesion_type
+                adhesion_extruder_nr
                 brim_width
                 raft_airgap
                 layer_0_z_overlap
                 raft_surface_layers
             dual
-                adhesion_extruder_nr
-                support_extruder_nr
                 prime_tower_enable
                 prime_tower_size
                 prime_tower_position_x
@@ -280,6 +316,12 @@ class CuraApplication(QtApplication):
                 continue
 
             self._recent_files.append(QUrl.fromLocalFile(f))
+
+    ## Lock file check: if (another) Cura is writing in the Config dir.
+    #  one may not be able to read a valid set of files while writing. Not entirely fool-proof,
+    #  but works when you start Cura shortly after shutting down.
+    def waitConfigLockFile(self):
+        waitFileDisappear(self._config_lock_filename, max_age_seconds=10, msg="Waiting for Cura to finish writing in the config dir...")
 
     def _onEngineCreated(self):
         self._engine.addImageProvider("camera", CameraImageProvider.CameraImageProvider())
@@ -308,38 +350,43 @@ class CuraApplication(QtApplication):
         if not self._started: # Do not do saving during application start
             return
 
-        for instance in ContainerRegistry.getInstance().findInstanceContainers():
-            if not instance.isDirty():
-                continue
+        self.waitConfigLockFile()
 
-            try:
-                data = instance.serialize()
-            except NotImplementedError:
-                continue
-            except Exception:
-                Logger.logException("e", "An exception occurred when serializing container %s", instance.getId())
-                continue
+        # When starting Cura, we check for the lockFile which is created and deleted here
+        with lockFile(self._config_lock_filename):
 
-            mime_type = ContainerRegistry.getMimeTypeForContainer(type(instance))
-            file_name = urllib.parse.quote_plus(instance.getId()) + "." + mime_type.preferredSuffix
-            instance_type = instance.getMetaDataEntry("type")
-            path = None
-            if instance_type == "material":
-                path = Resources.getStoragePath(self.ResourceTypes.MaterialInstanceContainer, file_name)
-            elif instance_type == "quality" or instance_type == "quality_changes":
-                path = Resources.getStoragePath(self.ResourceTypes.QualityInstanceContainer, file_name)
-            elif instance_type == "user":
-                path = Resources.getStoragePath(self.ResourceTypes.UserInstanceContainer, file_name)
-            elif instance_type == "variant":
-                path = Resources.getStoragePath(self.ResourceTypes.VariantInstanceContainer, file_name)
+            for instance in ContainerRegistry.getInstance().findInstanceContainers():
+                if not instance.isDirty():
+                    continue
 
-            if path:
-                instance.setPath(path)
-                with SaveFile(path, "wt", -1, "utf-8") as f:
-                    f.write(data)
+                try:
+                    data = instance.serialize()
+                except NotImplementedError:
+                    continue
+                except Exception:
+                    Logger.logException("e", "An exception occurred when serializing container %s", instance.getId())
+                    continue
 
-        for stack in ContainerRegistry.getInstance().findContainerStacks():
-            self.saveStack(stack)
+                mime_type = ContainerRegistry.getMimeTypeForContainer(type(instance))
+                file_name = urllib.parse.quote_plus(instance.getId()) + "." + mime_type.preferredSuffix
+                instance_type = instance.getMetaDataEntry("type")
+                path = None
+                if instance_type == "material":
+                    path = Resources.getStoragePath(self.ResourceTypes.MaterialInstanceContainer, file_name)
+                elif instance_type == "quality" or instance_type == "quality_changes":
+                    path = Resources.getStoragePath(self.ResourceTypes.QualityInstanceContainer, file_name)
+                elif instance_type == "user":
+                    path = Resources.getStoragePath(self.ResourceTypes.UserInstanceContainer, file_name)
+                elif instance_type == "variant":
+                    path = Resources.getStoragePath(self.ResourceTypes.VariantInstanceContainer, file_name)
+
+                if path:
+                    instance.setPath(path)
+                    with SaveFile(path, "wt", -1, "utf-8") as f:
+                        f.write(data)
+
+            for stack in ContainerRegistry.getInstance().findContainerStacks():
+                self.saveStack(stack)
 
     def saveStack(self, stack):
         if not stack.isDirty():
@@ -503,7 +550,8 @@ class CuraApplication(QtApplication):
 
         qmlRegisterType(cura.Settings.ContainerSettingsModel, "Cura", 1, 0, "ContainerSettingsModel")
         qmlRegisterType(cura.Settings.ProfilesModel, "Cura", 1, 0, "ProfilesModel")
-        qmlRegisterType(cura.Settings.ProfilesPageModel, "Cura", 1, 0, "ProfilesPageModel")
+        qmlRegisterType(cura.Settings.QualityAndUserProfilesModel, "Cura", 1, 0, "QualityAndUserProfilesModel")
+        qmlRegisterType(cura.Settings.UserProfilesModel, "Cura", 1, 0, "UserProfilesModel")
         qmlRegisterType(cura.Settings.MaterialSettingsVisibilityHandler, "Cura", 1, 0, "MaterialSettingsVisibilityHandler")
         qmlRegisterType(cura.Settings.QualitySettingsModel, "Cura", 1, 0, "QualitySettingsModel")
 
@@ -598,8 +646,6 @@ class CuraApplication(QtApplication):
                     op.addOperation(RemoveSceneNodeOperation(group_node))
         op.push()
 
-        pass
-
     ##  Remove an object from the scene.
     #   Note that this only removes an object if it is selected.
     @pyqtSlot("quint64")
@@ -613,17 +659,17 @@ class CuraApplication(QtApplication):
             node = Selection.getSelectedObject(0)
 
         if node:
-            group_node = None
-            if node.getParent():
-                group_node = node.getParent()
-                op = RemoveSceneNodeOperation(node)
+            op = GroupedOperation()
+            op.addOperation(RemoveSceneNodeOperation(node))
+
+            group_node = node.getParent()
+            if group_node:
+                # Note that at this point the node has not yet been deleted
+                if len(group_node.getChildren()) <= 2 and group_node.callDecoration("isGroup"):
+                    op.addOperation(SetParentOperation(group_node.getChildren()[0], group_node.getParent()))
+                    op.addOperation(RemoveSceneNodeOperation(group_node))
 
             op.push()
-            if group_node:
-                if len(group_node.getChildren()) == 1 and group_node.callDecoration("isGroup"):
-                    op.addOperation(SetParentOperation(group_node.getChildren()[0], group_node.getParent()))
-                    op = RemoveSceneNodeOperation(group_node)
-                    op.push()
 
     ##  Create a number of copies of existing object.
     @pyqtSlot("quint64", int)

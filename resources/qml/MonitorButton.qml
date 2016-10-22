@@ -161,9 +161,9 @@ Rectangle
         visible: showProgress;
         indeterminate:
         {
-            if (!printerConnected)
+            if(!printerConnected)
             {
-                return true;
+                return false;
             }
             switch(Cura.MachineManager.printerOutputDevices[0].jobState)
             {

@@ -141,10 +141,9 @@ class ExtruderManager(QObject):
             for extruder_train in extruder_trains:
                 self._extruder_trains[machine_id][extruder_train.getMetaDataEntry("position")] = extruder_train
 
-                # Make sure the next stack is a stack that contains only the machine definition
-                if not extruder_train.getNextStack():
-                    extruder_train.setNextStack(UM.Application.getInstance().getGlobalContainerStack())
-                    changed = True
+                # regardless of what the next stack is, we have to set it again, because of signal routing.
+                extruder_train.setNextStack(UM.Application.getInstance().getGlobalContainerStack())
+                changed = True
         if changed:
             self.extrudersChanged.emit(machine_id)
 
@@ -206,7 +205,7 @@ class ExtruderManager(QObject):
             if preferred_material_id:
                 search_criteria = { "type": "material",  "id": preferred_material_id}
                 if machine_definition.getMetaDataEntry("has_machine_materials"):
-                    search_criteria["definition"] = machine_definition.id
+                    search_criteria["definition"] = machine_definition_id
 
                     if machine_definition.getMetaDataEntry("has_variants") and variant:
                         search_criteria["variant"] = variant.id
@@ -260,9 +259,8 @@ class ExtruderManager(QObject):
             container_registry.addContainer(user_profile)
         container_stack.addContainer(user_profile)
 
-        # Make sure the next stack is a stack that contains only the machine definition
-        if not container_stack.getNextStack():
-            container_stack.setNextStack(UM.Application.getInstance().getGlobalContainerStack())
+        # regardless of what the next stack is, we have to set it again, because of signal routing.
+        container_stack.setNextStack(UM.Application.getInstance().getGlobalContainerStack())
 
         container_registry.addContainer(container_stack)
 

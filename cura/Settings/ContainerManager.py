@@ -480,6 +480,7 @@ class ContainerManager(QObject):
             new_changes = self._createQualityChanges(quality_container, unique_name,
                                                      UM.Application.getInstance().getGlobalContainerStack().getBottom(),
                                                      extruder_id)
+            self._performMerge(new_changes, quality_changes_container, clear_settings = False)
             self._performMerge(new_changes, user_container)
 
             self._container_registry.addContainer(new_changes)
@@ -563,6 +564,7 @@ class ContainerManager(QObject):
         container_registry = self._container_registry
 
         containers_to_rename = self._container_registry.findInstanceContainers(type = "quality_changes", name = quality_name)
+
         for container in containers_to_rename:
             stack_id = container.getMetaDataEntry("extruder", global_stack.getId())
             container_registry.renameContainer(container.getId(), new_name, self._createUniqueId(stack_id, new_name))
@@ -628,16 +630,16 @@ class ContainerManager(QObject):
         new_change_instances = []
 
         # Handle the global stack first.
-        new_changes = self._createQualityChanges(quality_container, new_name, machine_definition, None)
-        new_change_instances.append(new_changes)
-        self._container_registry.addContainer(new_changes)
+        global_changes = self._createQualityChanges(quality_container, new_name, machine_definition, None)
+        new_change_instances.append(global_changes)
+        self._container_registry.addContainer(global_changes)
 
         # Handle the extruders if present.
         extruders = machine_definition.getMetaDataEntry("machine_extruder_trains")
         if extruders:
-            for key in extruders:
-                value = extruders[key]
-                new_changes = self._createQualityChanges(quality_container, new_name, machine_definition, value)
+            for extruder_id in extruders:
+                extruder = extruders[extruder_id]
+                new_changes = self._createQualityChanges(quality_container, new_name, machine_definition, extruder)
                 new_change_instances.append(new_changes)
                 self._container_registry.addContainer(new_changes)
 
@@ -678,12 +680,22 @@ class ContainerManager(QObject):
         duplicated_container.setDirty(True)
         self._container_registry.addContainer(duplicated_container)
 
+    ##  Get the singleton instance for this class.
+    @classmethod
+    def getInstance(cls):
+        # Note: Explicit use of class name to prevent issues with inheritance.
+        if ContainerManager.__instance is None:
+            ContainerManager.__instance = cls()
+        return ContainerManager.__instance
+
+    __instance = None
+
     # Factory function, used by QML
     @staticmethod
     def createContainerManager(engine, js_engine):
-        return ContainerManager()
+        return ContainerManager.getInstance()
 
-    def _performMerge(self, merge_into, merge):
+    def _performMerge(self, merge_into, merge, clear_settings = True):
         assert isinstance(merge, type(merge_into))
 
         if merge == merge_into:
@@ -692,7 +704,8 @@ class ContainerManager(QObject):
         for key in merge.getAllKeys():
             merge_into.setProperty(key, "value", merge.getProperty(key, "value"))
 
-        merge.clear()
+        if clear_settings:
+            merge.clear()
 
     def _updateContainerNameFilters(self):
         self._container_name_filters = {}
