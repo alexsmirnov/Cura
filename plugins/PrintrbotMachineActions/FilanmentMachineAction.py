@@ -10,7 +10,7 @@ catalog = i18nCatalog("cura")
 
 class FilanmentMachineAction(MachineAction):
     def __init__(self):
-        super().__init__("Filanment", catalog.i18nc("@action", "Level build plate"))
+        super().__init__("Filanment", catalog.i18nc("@action", "Printrbot operations"))
         self._qml_url = "FilanmentMachineAction.qml"
         self.zOffset = ""
         self._zOffset = 0
