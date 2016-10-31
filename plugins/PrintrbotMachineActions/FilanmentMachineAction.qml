@@ -15,36 +15,17 @@ Cura.MachineAction
     anchors.fill: parent;
     Item
     {
-        id: bedLevelMachineAction
+        id: filanmentMachineAction
         anchors.fill: parent;
 
         UM.I18nCatalog { id: catalog; name: "cura"; }
 
         Label
         {
-            id: pageTitle
-            width: parent.width
-            text: catalog.i18nc("@title", "Build Plate Leveling")
-            wrapMode: Text.WordWrap
-            font.pointSize: 18;
-        }
-        Label
-        {
-            id: pageDescription
-            anchors.top: pageTitle.bottom
-            anchors.topMargin: UM.Theme.getSize("default_margin").height
-            width: parent.width
-            wrapMode: Text.WordWrap
-            text: catalog.i18nc("@label", "To make sure your prints will come out great, you can now adjust your buildplate. When you click 'Move to Next Position' the nozzle will move to the different positions that can be adjusted.")
-        }
-        Label
-        {
             id: filanmentText
-            anchors.top: pageDescription.bottom
-            anchors.topMargin: UM.Theme.getSize("default_margin").height
             width: parent.width
             wrapMode: Text.WordWrap
-            text: catalog.i18nc("@label", "For every position; insert a piece of paper under the nozzle and adjust the print build plate height. The print build plate height is right when the paper is slightly gripped by the tip of the nozzle.")
+            text: catalog.i18nc("@label", "Load new filanment, or unload old one")
         }
 
         Row
@@ -58,24 +39,122 @@ Cura.MachineAction
 
             Button
             {
-                id: startFilanmentingButton
-                text: catalog.i18nc("@action:button","Start Build Plate Leveling")
+                id: loadFilanmentButton
+                text: catalog.i18nc("@action:button","Load filanment")
                 onClicked:
                 {
-                    startFilanmentingButton.visible = false;
-                    filanmentButton.visible = true;
-                    manager.startFilanmenting();
+                    manager.loadFilanment();
                 }
             }
 
             Button
             {
-                id: filanmentButton
-                text: catalog.i18nc("@action:button","Move to Next Position")
-                visible: false
+                id: extrudeButton
+                text: catalog.i18nc("@action:button","Extrude more")
                 onClicked:
                 {
-                    manager.moveToNextLevelPosition();
+                    manager.extrudeFilanment();
+                }
+            }
+
+            Button
+            {
+                id: unloadFilanmentButton
+                text: catalog.i18nc("@action:button","Unload filanment")
+                onClicked:
+                {
+                    manager.unloadFilanment();
+                }
+            }
+        }
+
+        Label
+        {
+            id: moveText
+            anchors.top: filanmentWrapper.bottom
+            anchors.topMargin: UM.Theme.getSize("default_margin").height
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: catalog.i18nc("@label", "Move paltform and printhead")
+        }
+
+        Row
+        {
+            id: moveWrapper
+            anchors.top: moveText.bottom
+            anchors.topMargin: UM.Theme.getSize("default_margin").height
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: childrenRect.width
+            spacing: UM.Theme.getSize("default_margin").width
+
+            Button
+            {
+                id: homeXYButton
+                text: catalog.i18nc("@action:button","Move to home position")
+                onClicked:
+                {
+                    manager.moveHome();
+                }
+            }
+
+            Button
+            {
+                id: autolevelButton
+                text: catalog.i18nc("@action:button","Bed autoleveling")
+                onClicked:
+                {
+                    manager.autolevel();
+                }
+            }
+
+            Button
+            {
+                id: moveUpButton
+                text: catalog.i18nc("@action:button","Lift up printhead")
+                onClicked:
+                {
+                    manager.moveUp();
+                }
+            }
+        }
+
+        Label
+        {
+            id: zOffsetText
+            anchors.top: moveWrapper.bottom
+            anchors.topMargin: UM.Theme.getSize("default_margin").height
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: catalog.i18nc("@label", "Set default Z-offset and move printhead to center at Z=0.0")
+        }
+
+        Row
+        {
+            id: zOffsetWrapper
+            anchors.top: zOffsetText.bottom
+            anchors.topMargin: UM.Theme.getSize("default_margin").height
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: childrenRect.width
+            spacing: UM.Theme.getSize("default_margin").width
+
+            TextField {
+              id: zOffset
+
+              placeholderText: catalog.i18nc("@label:textbox", "Z Offset...");
+
+              onTextChanged:
+              {
+                  mznager.zOffset = text;
+              }
+            }
+
+            Button
+            {
+                id: zOffsetButton
+                text: catalog.i18nc("@action:button","Lift up printhead")
+                onClicked:
+                {
+                    manager.setZoffset(zOffset.text);
                 }
             }
         }
