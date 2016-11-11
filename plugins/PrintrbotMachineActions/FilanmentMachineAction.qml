@@ -103,7 +103,7 @@ Cura.MachineAction
                 text: catalog.i18nc("@action:button","Bed autoleveling")
                 onClicked:
                 {
-                    manager.autolevel();
+                    manager.autoLevel();
                 }
             }
 
@@ -139,24 +139,34 @@ Cura.MachineAction
 
             TextField {
               id: zOffset
-
+              text: manager.zOffset
               placeholderText: catalog.i18nc("@label:textbox", "Z Offset...");
+              inputMethodHints: Qt.ImhFormattedNumbersOnly
 
               onTextChanged:
               {
-                  mznager.zOffset = text;
+                  manager.zOffset = text;
               }
             }
 
             Button
             {
                 id: zOffsetButton
-                text: catalog.i18nc("@action:button","Lift up printhead")
+                text: catalog.i18nc("@action:button","Set default Z-offset")
                 onClicked:
                 {
                     manager.setZoffset(zOffset.text);
                 }
             }
+        }
+        Label
+        {
+            id: statusText
+            anchors.top: zOffsetWrapper.bottom
+            anchors.topMargin: UM.Theme.getSize("default_margin").height
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: manager.status
         }
     }
 }
